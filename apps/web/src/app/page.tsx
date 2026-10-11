@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import Jobs from "@/components/Jobs";
-import { api, logout, user, type User } from "@/lib/api";
+import { api, logout, type User } from "@/lib/api";
 
 export default function Home() {
   const router = useRouter();
@@ -37,7 +38,7 @@ export default function Home() {
 
   return <>
     <header className="container nav">
-      <a className="brand" href="/">Job<span>AI</span></a>
+      <Link className="brand" href="/">Job<span>AI</span></Link>
       <nav className="row">
         <a href="#jobs">Browse jobs</a>
         {checkedSession && account ? <>
