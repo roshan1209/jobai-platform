@@ -1,0 +1,8 @@
+const BASE=(process.env.NEXT_PUBLIC_API_URL||"http://127.0.0.1:8000").replace(/\/$/,"");
+export type User={id:string;name:string;email:string;role:"job_seeker"|"recruiter"};
+export type Skill={name:string;proficiency:number};
+export type Job={id:string;title:string;company:string;location:string;work_mode:string;description:string;salary_min:number|null;salary_max:number|null;experience_min:number;experience_max:number;skills:{name:string;minimum_level:number;requirement_type:string;weight:number}[];created_at:string;recruiter_id:string};
+export async function api<T>(path:string,init:RequestInit={}):Promise<T>{const headers=new Headers(init.headers);if(init.body&&!headers.has("Content-Type"))headers.set("Content-Type","application/json");if(typeof window!=="undefined"){const t=localStorage.getItem("jobai_token");if(t)headers.set("Authorization",`Bearer ${t}`)}let res:Response;try{res=await fetch(`${BASE}${path}`,{...init,headers,cache:"no-store"})}catch{throw new Error("Cannot reach FastAPI. Check that the backend is running.")}const data=await res.json().catch(()=>({}));if(!res.ok){if(res.status===401&&typeof window!=="undefined"&&path!=="/api/v1/auth/login"&&path!=="/api/v1/auth/register"){logout()}throw new Error(data.detail||`Request failed (${res.status})`)}return data as T}
+export function saveSession(t:string,u:User){localStorage.setItem("jobai_token",t);localStorage.setItem("jobai_user",JSON.stringify(u))}
+export function user():User|null{try{return typeof window==="undefined"?null:JSON.parse(localStorage.getItem("jobai_user")||"null")}catch{return null}}
+export function logout(){if(typeof window==="undefined")return;localStorage.removeItem("jobai_token");localStorage.removeItem("jobai_user")}

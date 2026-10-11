@@ -1,0 +1,19 @@
+# Secrets
+.env
+.env.*
+!.env.example
+!.env.local.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+
+# Generated demo data
+seed_output/

@@ -1,0 +1,1 @@
+import ProfileForm from "@/components/ProfileForm";export default function Page(){return <><h1 style={{fontSize:34}}>Profile & skills</h1><p className="muted">Keep your skills updated for better recommendations.</p><ProfileForm/></>}

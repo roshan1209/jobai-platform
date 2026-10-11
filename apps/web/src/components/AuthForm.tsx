@@ -1,0 +1,15 @@
+"use client";
+import {useEffect,useState} from "react";
+import {useRouter} from "next/navigation";
+import Link from "next/link";
+import {api,saveSession,user,type User} from "@/lib/api";
+export default function AuthForm({mode}:{mode:"login"|"register"}){
+ const router=useRouter();
+ const [name,SN]=useState(""),[email,SE]=useState(""),[password,SP]=useState(""),[role,SR]=useState<"job_seeker"|"recruiter">("job_seeker"),[error,ER]=useState(""),[busy,SB]=useState(false);
+ useEffect(()=>{const existing=user();if(existing)router.replace(existing.role==="recruiter"?"/recruiter/dashboard":"/seeker/dashboard")},[router]);
+ async function submit(e:React.FormEvent){e.preventDefault();ER("");SB(true);try{const r=await api<{access_token:string;user:User}>(mode==="login"?"/api/v1/auth/login":"/api/v1/auth/register",{method:"POST",body:JSON.stringify(mode==="login"?{email:email.trim(),password}:{name:name.trim(),email:email.trim(),password,role})});saveSession(r.access_token,r.user);
+   if(mode==="register") router.replace(r.user.role==="recruiter"?"/recruiter/jobs/new":"/seeker/profile?setup=1");
+   else router.replace(r.user.role==="recruiter"?"/recruiter/dashboard":"/seeker/dashboard");
+  }catch(e){ER(e instanceof Error?e.message:"Could not complete authentication")}finally{SB(false)}}
+ return <div className="panel" style={{maxWidth:480,margin:"40px auto"}}><span className="pill">JOBAI ACCOUNT</span><h1 style={{fontSize:34}}>{mode==="login"?"Welcome back":"Create your account"}</h1><p className="muted">{mode==="login"?"Sign in to continue to your personalized dashboard.":"Join as a job seeker to get skill-matched jobs, or as a recruiter to find matching candidates."}</p><form className="form" onSubmit={submit}>{mode==="register"&&<div className="field"><label>Full name</label><input autoComplete="name" required minLength={2} value={name} onChange={e=>SN(e.target.value)}/></div>}<div className="field"><label>Email address</label><input type="email" autoComplete="email" required value={email} onChange={e=>SE(e.target.value)}/></div><div className="field"><label>Password {mode==="register"?"(at least 8 characters)":""}</label><input type="password" autoComplete={mode==="login"?"current-password":"new-password"} required minLength={mode==="register"?8:1} value={password} onChange={e=>SP(e.target.value)}/></div>{mode==="register"&&<div className="field"><label>Account type</label><select value={role} onChange={e=>SR(e.target.value as typeof role)}><option value="job_seeker">Job seeker — find matched jobs</option><option value="recruiter">Recruiter — post jobs and find candidates</option></select></div>}{error&&<div className="status error">{error}</div>}<button className="button" disabled={busy}>{busy?"Please wait…":mode==="login"?"Sign in":"Create account"}</button></form><p className="muted">{mode==="login"?"Don't have an account? ":"Already have an account? "}<Link href={mode==="login"?"/sign-up":"/sign-in"}><u>{mode==="login"?"Create account":"Sign in"}</u></Link></p></div>
+}
