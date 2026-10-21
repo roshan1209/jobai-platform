@@ -192,12 +192,16 @@ def _normalize_candidate_skills(raw_skills):
 
 
 @app.get("/api/v1/recruiter/jobs/{job_id}/matches")
-async def recruiter_job_matches(job_id: str, u=Depends(require_role("recruiter"))):
-    """Return all active seeker profiles ranked against a recruiter-owned job.
+async def recruiter_job_matches(
+    job_id: str,
+    limit: int = 5,
+    offset: int = 0,
+    u=Depends(require_role("recruiter")),
+):
+    """Return a ranked page of seeker matches; default page size is five."""
+    limit = max(1, min(limit, 20))
+    offset = max(0, offset)
 
-    Tolerates legacy records where recruiter/user references are strings, the
-    is_active field is absent, or skill fields use older common names.
-    """
     job_oid = oid(job_id)
     recruiter_oid = ObjectId(u["id"])
     job = await database.jobs.find_one({
@@ -218,12 +222,40 @@ async def recruiter_job_matches(job_id: str, u=Depends(require_role("recruiter")
         "role": {"$in": ["job_seeker", "seeker"]},
         "$or": [{"is_active": True}, {"is_active": {"$exists": False}}],
     }
+
+    # Read seekers and profiles in bulk instead of issuing one profile query per seeker.
+    candidates = [
+        candidate async for candidate in database.users.find(
+            seeker_filter,
+            {"_id": 1, "name": 1, "email": 1}
+        )
+    ]
+    candidate_ids = [candidate["_id"] for candidate in candidates]
+    profiles_by_user = {}
+
+    # Chunk $in queries to keep MongoDB requests reasonably sized.
+    for batch_start in range(0, len(candidate_ids), 500):
+        id_batch = candidate_ids[batch_start:batch_start + 500]
+        profile_filter = {
+            "$or": [
+                {"user_id": {"$in": id_batch}},
+                {"user_id": {"$in": [str(uid) for uid in id_batch]}},
+            ]
+        }
+        async for profile in database.profiles.find(profile_filter):
+            profile_user_id = profile.get("user_id")
+            profiles_by_user[str(profile_user_id)] = profile
+
     output = []
-    async for candidate in database.users.find(seeker_filter):
+    try:
+        exp_min = float(job.get("experience_min", 0) or 0)
+        exp_max = float(job.get("experience_max", 70) if job.get("experience_max") is not None else 70)
+    except (TypeError, ValueError):
+        exp_min, exp_max = 0.0, 70.0
+
+    for candidate in candidates:
         uid = candidate["_id"]
-        profile = await database.profiles.find_one({
-            "$or": [{"user_id": uid}, {"user_id": str(uid)}]
-        }) or {}
+        profile = profiles_by_user.get(str(uid), {})
         candidate_skills = _normalize_candidate_skills(profile.get("skills", []))
         result = match(requirements, candidate_skills)
 
@@ -231,11 +263,6 @@ async def recruiter_job_matches(job_id: str, u=Depends(require_role("recruiter")
             experience = float(profile.get("experience_years", profile.get("years_experience", 0)) or 0)
         except (TypeError, ValueError):
             experience = 0.0
-        try:
-            exp_min = float(job.get("experience_min", 0) or 0)
-            exp_max = float(job.get("experience_max", 70) if job.get("experience_max") is not None else 70)
-        except (TypeError, ValueError):
-            exp_min, exp_max = 0.0, 70.0
 
         result["experience_match"] = exp_min <= experience <= exp_max
         result["candidate"] = {
@@ -259,4 +286,12 @@ async def recruiter_job_matches(job_id: str, u=Depends(require_role("recruiter")
         ),
         reverse=True,
     )
-    return output
+    total = len(output)
+    items = output[offset:offset + limit]
+    return {
+        "items": items,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "has_more": offset + len(items) < total,
+    }
