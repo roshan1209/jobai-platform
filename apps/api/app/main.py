@@ -128,44 +128,135 @@ async def applicants(job_id:str,u=Depends(require_role("recruiter"))):
         if c: out.append({"id":str(a["_id"]),"status":a["status"],"candidate":{"name":c["name"],"email":c["email"],"location":p.get("location",""),"experience_years":p.get("experience_years",0),"skills":p.get("skills",[])}})
     return out
 
+def _normalize_job_requirements(raw_skills):
+    """Accept both current JobAI skills and common older/demo field names."""
+    cleaned = []
+    for item in raw_skills or []:
+        if isinstance(item, str):
+            name = item.strip()
+            level, kind, weight = 2, "required", 0
+        elif isinstance(item, dict):
+            name = str(item.get("name") or item.get("skill") or item.get("skill_name") or "").strip()
+            level = item.get("minimum_level", item.get("required_level", item.get("level", 2)))
+            kind = item.get("requirement_type", item.get("type", "required"))
+            weight = item.get("weight", 0)
+        else:
+            continue
+        if not name:
+            continue
+        try:
+            level = max(1, min(4, int(level)))
+            weight = max(0.0, float(weight))
+        except (TypeError, ValueError):
+            level, weight = 2, 0.0
+        if kind not in ("required", "preferred"):
+            kind = "required"
+        cleaned.append({"name": name, "minimum_level": level, "requirement_type": kind, "weight": weight})
+
+    # Some old/demo jobs don't have weights. Ensure the matcher gets a valid 100-point scale.
+    if cleaned:
+        total = sum(x["weight"] for x in cleaned)
+        if total <= 0:
+            each = round(100 / len(cleaned), 2)
+            for x in cleaned:
+                x["weight"] = each
+            cleaned[-1]["weight"] = round(100 - sum(x["weight"] for x in cleaned[:-1]), 2)
+        elif abs(total - 100) > 0.01:
+            for x in cleaned:
+                x["weight"] = round(x["weight"] * 100 / total, 2)
+            cleaned[-1]["weight"] = round(100 - sum(x["weight"] for x in cleaned[:-1]), 2)
+    return [JobSkill.model_validate(x) for x in cleaned]
+
+
+def _normalize_candidate_skills(raw_skills):
+    cleaned = []
+    seen = set()
+    for item in raw_skills or []:
+        if isinstance(item, str):
+            name, proficiency = item.strip(), 2
+        elif isinstance(item, dict):
+            name = str(item.get("name") or item.get("skill") or item.get("skill_name") or "").strip()
+            proficiency = item.get("proficiency", item.get("level", item.get("rating", 1)))
+        else:
+            continue
+        key = name.casefold()
+        if not name or key in seen:
+            continue
+        try:
+            proficiency = max(1, min(4, int(proficiency)))
+        except (TypeError, ValueError):
+            proficiency = 1
+        cleaned.append(Skill(name=name, proficiency=proficiency))
+        seen.add(key)
+    return cleaned
+
+
 @app.get("/api/v1/recruiter/jobs/{job_id}/matches")
 async def recruiter_job_matches(job_id: str, u=Depends(require_role("recruiter"))):
-    """Rank all active job seekers for a job owned by the signed-in recruiter.
+    """Return all active seeker profiles ranked against a recruiter-owned job.
 
-    Candidates without a saved profile are included with an empty skills list and
-    a zero/low match score, so the recruiter can still see the candidate pool.
+    Tolerates legacy records where recruiter/user references are strings, the
+    is_active field is absent, or skill fields use older common names.
     """
     job_oid = oid(job_id)
     recruiter_oid = ObjectId(u["id"])
-    job = await database.jobs.find_one({"_id": job_oid, "recruiter_id": recruiter_oid})
+    job = await database.jobs.find_one({
+        "_id": job_oid,
+        "$or": [{"recruiter_id": recruiter_oid}, {"recruiter_id": u["id"]}],
+    })
     if not job:
-        raise HTTPException(404, "Job not found or not owned by you")
+        raise HTTPException(status_code=404, detail="Job not found or not owned by you")
 
-    requirements = [JobSkill.model_validate(s) for s in job.get("skills", [])]
+    requirements = _normalize_job_requirements(job.get("skills", []))
+    if not requirements:
+        raise HTTPException(
+            status_code=422,
+            detail="This job has no valid skill requirements. Edit the job and add at least one skill.",
+        )
+
+    seeker_filter = {
+        "role": {"$in": ["job_seeker", "seeker"]},
+        "$or": [{"is_active": True}, {"is_active": {"$exists": False}}],
+    }
     output = []
-    async for candidate in database.users.find({"role": "job_seeker", "is_active": True}):
-        profile = await database.profiles.find_one({"user_id": candidate["_id"]}) or {}
-        candidate_skills = [Skill.model_validate(s) for s in profile.get("skills", [])]
+    async for candidate in database.users.find(seeker_filter):
+        uid = candidate["_id"]
+        profile = await database.profiles.find_one({
+            "$or": [{"user_id": uid}, {"user_id": str(uid)}]
+        }) or {}
+        candidate_skills = _normalize_candidate_skills(profile.get("skills", []))
         result = match(requirements, candidate_skills)
-        experience = float(profile.get("experience_years", 0) or 0)
-        exp_min = float(job.get("experience_min", 0) or 0)
-        exp_max = float(job.get("experience_max", 70) if job.get("experience_max") is not None else 70)
+
+        try:
+            experience = float(profile.get("experience_years", profile.get("years_experience", 0)) or 0)
+        except (TypeError, ValueError):
+            experience = 0.0
+        try:
+            exp_min = float(job.get("experience_min", 0) or 0)
+            exp_max = float(job.get("experience_max", 70) if job.get("experience_max") is not None else 70)
+        except (TypeError, ValueError):
+            exp_min, exp_max = 0.0, 70.0
+
         result["experience_match"] = exp_min <= experience <= exp_max
         result["candidate"] = {
-            "id": str(candidate["_id"]),
-            "name": candidate.get("name", "Candidate"),
+            "id": str(uid),
+            "name": candidate.get("name", profile.get("name", "Candidate")),
             "email": candidate.get("email", ""),
             "location": profile.get("location", ""),
             "education": profile.get("education", ""),
             "experience_years": experience,
             "preferred_work_mode": profile.get("preferred_work_mode", "any"),
-            "skills": profile.get("skills", []),
-            "profile_complete": bool(profile.get("skills")),
+            "skills": [s.model_dump() for s in candidate_skills],
+            "profile_complete": bool(candidate_skills),
         }
         output.append(result)
 
-    return sorted(
-        output,
-        key=lambda item: (item["score"], item["experience_match"], bool(item["candidate"]["skills"])),
+    output.sort(
+        key=lambda item: (
+            float(item.get("score", 0)),
+            bool(item.get("experience_match")),
+            bool(item["candidate"].get("skills")),
+        ),
         reverse=True,
     )
+    return output
