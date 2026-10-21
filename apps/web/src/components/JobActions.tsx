@@ -1,1 +1,29 @@
-"use client";import {useState} from "react";import {api} from "@/lib/api";export default function JobActions({id}:{id:string}){const [msg,SM]=useState(""),[err,SE]=useState("");async function apply(){SM("");SE("");try{const r=await api<{message:string}>(`/api/v1/jobs/${id}/apply`,{method:"POST",body:"{}"});SM(r.message)}catch(e){SE(e instanceof Error?e.message:"Could not apply")}}return <div className="form" style={{marginTop:20}}><button className="button" onClick={apply}>Apply for this job</button>{msg&&<div className="status ok">{msg}</div>}{err&&<div className="status error">{err}</div>}</div>}
+"use client";
+import { useState } from "react";
+import { api } from "@/lib/api";
+export default function JobActions({ id }: { id: string }) {
+  const [msg, SM] = useState(""),
+    [err, SE] = useState("");
+  async function apply() {
+    SM("");
+    SE("");
+    try {
+      const r = await api<{ message: string }>(`/api/v1/jobs/${id}/apply`, {
+        method: "POST",
+        body: "{}",
+      });
+      SM(r.message);
+    } catch (e) {
+      SE(e instanceof Error ? e.message : "Could not apply");
+    }
+  }
+  return (
+    <div className="form" style={{ marginTop: 20 }}>
+      <button className="button" onClick={apply}>
+        Apply for this job
+      </button>
+      {msg && <div className="status ok">{msg}</div>}
+      {err && <div className="status error">{err}</div>}
+    </div>
+  );
+}

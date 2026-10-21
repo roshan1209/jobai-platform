@@ -22,6 +22,8 @@ export default function Page() {
   const [location, setLocation] = useState("Chennai");
   const [mode, setMode] = useState<"hybrid" | "remote" | "onsite">("hybrid");
   const [description, setDescription] = useState("");
+  const [experienceMin, setExperienceMin] = useState(0);
+  const [experienceMax, setExperienceMax] = useState(5);
   const [skills, setSkills] = useState<JobSkillInput[]>([
     { name: "React", minimum_level: 3, requirement_type: "required", weight: 40 },
     { name: "TypeScript", minimum_level: 2, requirement_type: "required", weight: 35 },
@@ -66,11 +68,15 @@ export default function Page() {
       setError(`Skill weights must total 100. Current total: ${weightTotal.toFixed(2)}.`);
       return;
     }
+    if (experienceMin > experienceMax) {
+      setError("Minimum experience cannot be greater than maximum experience.");
+      return;
+    }
     setBusy(true);
     try {
       const job = await api<CreatedJob>("/api/v1/jobs", {
         method: "POST",
-        body: JSON.stringify({ title, company, location, work_mode: mode, description, skills: skills.map((skill) => ({ ...skill, name: skill.name.trim(), weight: Number(skill.weight) })) }),
+        body: JSON.stringify({ title, company, location, work_mode: mode, description, experience_min: experienceMin, experience_max: experienceMax, skills: skills.map((skill) => ({ ...skill, name: skill.name.trim(), weight: Number(skill.weight) })) }),
       });
       router.push(`/recruiter/jobs/${job.id}/applications`);
     } catch (e) {
@@ -94,6 +100,24 @@ export default function Page() {
           <div className="field"><label htmlFor="job-work-mode">Work mode</label><select id="job-work-mode" value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}><option value="hybrid">Hybrid</option><option value="remote">Remote</option><option value="onsite">On-site</option></select></div>
         </div>
         <div className="field"><label htmlFor="job-description">Job description</label><textarea id="job-description" required minLength={10} maxLength={10000} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Responsibilities, expectations, and what the candidate will work on…" /></div>
+
+        <section aria-labelledby="experience-heading" style={{ border: "1px solid #e5eaf2", borderRadius: 12, padding: 16, display: "grid", gap: 12 }}>
+          <div>
+            <h2 id="experience-heading" style={{ margin: 0, fontSize: 20 }}>Experience requirements</h2>
+            <p className="muted" style={{ margin: "4px 0 0", fontSize: 13 }}>Set the expected professional experience range for this role.</p>
+          </div>
+          <div className="grid2">
+            <div className="field">
+              <label htmlFor="experience-min">Minimum experience (years)</label>
+              <input id="experience-min" type="number" min="0" max="70" step="0.5" required value={experienceMin} onChange={(e) => setExperienceMin(Number(e.target.value))} />
+            </div>
+            <div className="field">
+              <label htmlFor="experience-max">Maximum experience (years)</label>
+              <input id="experience-max" type="number" min="0" max="70" step="0.5" required value={experienceMax} onChange={(e) => setExperienceMax(Number(e.target.value))} />
+            </div>
+          </div>
+          {experienceMin > experienceMax && <div className="status error">Minimum experience cannot be greater than maximum experience.</div>}
+        </section>
 
         <section aria-labelledby="requirements-heading" style={{ border: "1px solid #e5eaf2", borderRadius: 12, padding: 16, display: "grid", gap: 13 }}>
           <div className="jobtop">
@@ -137,7 +161,7 @@ export default function Page() {
         </section>
 
         {error && <div className="status error" role="alert">{error}</div>}
-        <button className="button" type="submit" disabled={busy || skills.length === 0 || !weightsValid}>{busy ? "Publishing…" : "Publish job"}</button>
+        <button className="button" type="submit" disabled={busy || skills.length === 0 || !weightsValid || experienceMin > experienceMax}>{busy ? "Publishing…" : "Publish job"}</button>
       </form>
     </>
   );
