@@ -129,21 +129,43 @@ async def applicants(job_id:str,u=Depends(require_role("recruiter"))):
     return out
 
 @app.get("/api/v1/recruiter/jobs/{job_id}/matches")
-async def recruiter_job_matches(job_id:str,u=Depends(require_role("recruiter"))):
-    """Rank job seekers by skill coverage for a job owned by the signed-in recruiter."""
-    i=oid(job_id)
-    job=await database.jobs.find_one({"_id":i,"recruiter_id":ObjectId(u["id"])})
-    if not job: raise HTTPException(404,"Job not found or not owned by you")
-    requirements=[JobSkill.model_validate(s) for s in job.get("skills",[])]
-    out=[]
-    async for candidate in database.users.find({"role":"job_seeker","is_active":True,"_id":{"$ne":ObjectId(u["id"])}}):
-        profile=await database.profiles.find_one({"user_id":candidate["_id"]})
-        if not profile: continue
-        candidate_skills=[Skill.model_validate(s) for s in profile.get("skills",[])]
-        result=match(requirements,candidate_skills)
-        experience=float(profile.get("experience_years",0) or 0)
-        exp_min=float(job.get("experience_min",0) or 0); exp_max=float(job.get("experience_max",70) or 70)
-        result["experience_match"]=exp_min<=experience<=exp_max
-        result["candidate"]={"id":str(candidate["_id"]),"name":candidate.get("name","Candidate"),"email":candidate.get("email",""),"location":profile.get("location",""),"education":profile.get("education",""),"experience_years":experience,"preferred_work_mode":profile.get("preferred_work_mode","any"),"skills":profile.get("skills",[])}
-        out.append(result)
-    return sorted(out,key=lambda x:(x["score"],x["experience_match"]),reverse=True)
+async def recruiter_job_matches(job_id: str, u=Depends(require_role("recruiter"))):
+    """Rank all active job seekers for a job owned by the signed-in recruiter.
+
+    Candidates without a saved profile are included with an empty skills list and
+    a zero/low match score, so the recruiter can still see the candidate pool.
+    """
+    job_oid = oid(job_id)
+    recruiter_oid = ObjectId(u["id"])
+    job = await database.jobs.find_one({"_id": job_oid, "recruiter_id": recruiter_oid})
+    if not job:
+        raise HTTPException(404, "Job not found or not owned by you")
+
+    requirements = [JobSkill.model_validate(s) for s in job.get("skills", [])]
+    output = []
+    async for candidate in database.users.find({"role": "job_seeker", "is_active": True}):
+        profile = await database.profiles.find_one({"user_id": candidate["_id"]}) or {}
+        candidate_skills = [Skill.model_validate(s) for s in profile.get("skills", [])]
+        result = match(requirements, candidate_skills)
+        experience = float(profile.get("experience_years", 0) or 0)
+        exp_min = float(job.get("experience_min", 0) or 0)
+        exp_max = float(job.get("experience_max", 70) if job.get("experience_max") is not None else 70)
+        result["experience_match"] = exp_min <= experience <= exp_max
+        result["candidate"] = {
+            "id": str(candidate["_id"]),
+            "name": candidate.get("name", "Candidate"),
+            "email": candidate.get("email", ""),
+            "location": profile.get("location", ""),
+            "education": profile.get("education", ""),
+            "experience_years": experience,
+            "preferred_work_mode": profile.get("preferred_work_mode", "any"),
+            "skills": profile.get("skills", []),
+            "profile_complete": bool(profile.get("skills")),
+        }
+        output.append(result)
+
+    return sorted(
+        output,
+        key=lambda item: (item["score"], item["experience_match"], bool(item["candidate"]["skills"])),
+        reverse=True,
+    )
